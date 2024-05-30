@@ -45,7 +45,7 @@ __global__ void subtractArrays(const double *A, const double *Anew, double *Sub_
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     int j = blockDim.y * blockIdx.y + threadIdx.y;
     if ((i >= 0) && (i < m) && (j >= 0) && (j < m)) {
-        Sub_res[OFFSET(i,j,m)] = A[OFFSET(i,j,m)] - Anew[OFFSET(i,j,m)];
+        Sub_res[OFFSET(i,j,m)] = fabs(A[OFFSET(i,j,m)] - Anew[OFFSET(i,j,m)]);
     }
 }
 
@@ -66,6 +66,13 @@ __global__ void getAverage(double *A, double *Anew, int m, bool calcLeft) {
     }
 }
 
+
+void printCudaError(cudaError_t error, char err_src[]) { //error printing function to reduce line count
+    if (error != cudaSuccess) {
+        printf("Error: %i while performing %s \n", error, err_src);
+        exit(EXIT_FAILURE);
+    }
+}
 
 
 int main(int argc, char **argv)
@@ -139,19 +146,25 @@ int main(int argc, char **argv)
     // выделение памяти и перенос на GPU
 	double *d_error_ptr = d_unique_ptr_error.get();
 	cudaErr = cudaMalloc((void**)&d_error_ptr, sizeof(double));
+    printCudaError(cudaErr, "cudaMalloc");
 
     double *d_A = d_unique_ptr_A.get();
   	cudaErr = cudaMalloc((void **)&d_A, m*m*sizeof(double));
+    printCudaError(cudaErr, "cudaMalloc");
 
 	double *d_Anew = d_unique_ptr_Anew.get();
 	cudaErr = cudaMalloc((void **)&d_Anew, m*m*sizeof(double));
+    printCudaError(cudaErr, "cudaMalloc");
 
     double *d_Subtract_temp = d_unique_ptr_Subtract_temp.get();
 	cudaErr = cudaMalloc((void **)&d_Subtract_temp, m*m*sizeof(double));
+    printCudaError(cudaErr, "cudaMalloc");
 
-    cudaErr = cudaMemcpyAsync(d_A, A, m*m*sizeof(double), cudaMemcpyHostToDevice, stream);
-    cudaErr = cudaMemcpyAsync(d_Anew, Anew, m*m*sizeof(double), cudaMemcpyHostToDevice, stream);
+    cudaErr = cudaMemcpy(d_A, A, m*m*sizeof(double), cudaMemcpyHostToDevice);
+    printCudaError(cudaErr, "cudaMemcpy");
 
+    cudaErr = cudaMemcpy(d_Anew, Anew, m*m*sizeof(double), cudaMemcpyHostToDevice);
+    printCudaError(cudaErr, "cudaMemcpy");
 	// проверка занимаемой памяти для редукции
     void *d_temp_storage = d_unique_ptr_temp_storage.get();
     size_t temp_storage_bytes = 0;
@@ -171,6 +184,7 @@ int main(int argc, char **argv)
     int iter = 0;
     auto start = std::chrono::high_resolution_clock::now();
     
+    cudaDeviceSynchronize();
     nvtxRangePushA("while");
     while (error > tol && iter < iter_max)
     {
@@ -178,24 +192,30 @@ int main(int argc, char **argv)
             // создание графа
             nvtxRangePushA("createGraph");
             cudaErr = cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+            printCudaError(cudaErr, "cudaStreamBeginCapture");
             for (int i = 0; i < 100; i++) {
                 getAverage<<<grid, block, 0, stream>>>(d_A, d_Anew, m, (bool)(i % 2));
             }
             cudaErr = cudaStreamEndCapture(stream, &graph);
+            printCudaError(cudaErr, "cudaStreamEndCapture");
             nvtxRangePop();
             cudaErr = cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
+            printCudaError(cudaErr, "cudaGraphInstantiate");
             graph_created = true;
         }
         nvtxRangePushA("startGraph");
         //запуск графа
         cudaErr = cudaGraphLaunch(instance, stream);
+        printCudaError(cudaErr, "cudaGraphLaunch");
+        
         nvtxRangePop();
         iter += 100;
         if (iter % 100 == 0){
             nvtxRangePushA("calcError");
             subtractArrays<<<grid, block, 0, stream>>>(d_A, d_Anew, d_Subtract_temp, m);
             cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_Subtract_temp, d_error_ptr, m*m, stream);
-            cudaErr = cudaMemcpyAsync(&error, d_error_ptr, sizeof(double), cudaMemcpyDeviceToHost, stream);
+            cudaErr = cudaMemcpy(&error, d_error_ptr, sizeof(double), cudaMemcpyDeviceToHost);
+            printCudaError(cudaErr, "cudaMemcpy");
             nvtxRangePop();
         }
         if (iter % 1000 == 0)
@@ -208,6 +228,7 @@ int main(int argc, char **argv)
 
     printf("total: %f s\n", elapsed_seconds.count());
     cudaErr = cudaMemcpy(A, d_A, m*m*sizeof(double), cudaMemcpyDeviceToHost);
+    printCudaError(cudaErr, "cudaMemcpy");
     std::ofstream out("out.txt");
     for (int j = 0; j < n; j++){
         for (int i = 0; i < m; i++){

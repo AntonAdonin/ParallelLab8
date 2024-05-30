@@ -51,6 +51,16 @@ __global__ void subtractArrays(const double *A, const double *Anew, double *Sub_
 }
 
 
+void printCudaError(cudaError_t error, char err_src[]) { //error printing function to reduce line count
+    if (error != cudaSuccess) {
+        printf("Error: %i while performing %s \n", error, err_src);
+        exit(EXIT_FAILURE);
+    }
+}
+
+
+
+
 int main(int argc, char **argv)
 {
     int m = 256;
@@ -120,6 +130,7 @@ int main(int argc, char **argv)
 
 	double *d_error_ptr = d_unique_ptr_error.get();
 	cudaErr = cudaMalloc((void**)&d_error_ptr, sizeof(double));
+    // printCudaError(cudaErr, "cudaMalloc");
 
     void *d_temp_storage = d_unique_ptr_temp_storage.get();
     size_t temp_storage_bytes = 0;
@@ -153,7 +164,8 @@ int main(int argc, char **argv)
                     {
                         subtractArrays<<<grid, block, 0, stream>>>(A, Anew, Subtract_temp, m);
                         cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, Subtract_temp, d_error_ptr, m*m, stream);
-                        cudaErr = cudaMemcpyAsync(&error, d_error_ptr, sizeof(double), cudaMemcpyDeviceToHost, stream);
+                        cudaErr = cudaMemcpy(&error, d_error_ptr, sizeof(double), cudaMemcpyDeviceToHost);
+                        printCudaError(cudaErr, "cudaMemcpy");
                     }
                 nvtxRangePop();
             }
