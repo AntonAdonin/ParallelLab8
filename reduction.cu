@@ -116,13 +116,14 @@ int main(int argc, char **argv)
     nvtxRangePop();
 
 
-    dim3 grid(256 , 256);
+    dim3 grid(32 , 32);
 
 	dim3 block(32, 32);
 
     cudaError_t cudaErr = cudaSuccess;
     cudaStream_t stream;
-    cudaStreamCreate(&stream);
+    cudaErr = cudaStreamCreate(&stream);
+    printCudaError(cudaErr, "cudaStreamCreate");
 
     cuda_unique_ptr<double> d_unique_ptr_error(cuda_new<double>(0), cuda_delete<double>);
     cuda_unique_ptr<void> d_unique_ptr_temp_storage(cuda_new<void>(0), cuda_delete<void>);
@@ -130,13 +131,15 @@ int main(int argc, char **argv)
 
 	double *d_error_ptr = d_unique_ptr_error.get();
 	cudaErr = cudaMalloc((void**)&d_error_ptr, sizeof(double));
-    // printCudaError(cudaErr, "cudaMalloc");
+    printCudaError(cudaErr, "cudaMalloc");
 
     void *d_temp_storage = d_unique_ptr_temp_storage.get();
     size_t temp_storage_bytes = 0;
 	//we call DeviceReduce here to check how much memory we need for temporary storage
     cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, Anew, d_error_ptr, m*m, stream);
-    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    cudaErr = cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    printCudaError(cudaErr, "cudaMalloc");
+
     printf("temp_storage_bytes: %d\n\n", temp_storage_bytes);
     printf("Jacobi relaxation Calculation: %d x %d mesh\n", m, m);
     printf("Max iterations: %d\n", iter_max);

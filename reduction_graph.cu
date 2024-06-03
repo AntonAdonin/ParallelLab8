@@ -74,6 +74,31 @@ void printCudaError(cudaError_t error, char err_src[]) { //error printing functi
     }
 }
 
+struct CudaStreamDeleter {
+    void operator()(cudaStream_t* stream) const {
+        cudaStreamDestroy(*stream);
+    }
+};
+
+struct CudaGraphDeleter {
+    void operator()(cudaGraph_t* graph) const {
+        cudaGraphDestroy(*graph);
+    }
+};
+
+std::unique_ptr<cudaStream_t, CudaStreamDeleter> getNewCudaStream() {
+    cudaStream_t stream;
+    cudaError_t cudaErr = cudaStreamCreate(&stream);
+    printCudaError(cudaErr, "cudaStreamCreate");
+    return std::unique_ptr<cudaStream_t, CudaStreamDeleter>(&stream);
+}
+
+std::unique_ptr<cudaGraph_t, CudaGraphDeleter> getNewCudaGraph() {
+    cudaGraph_t graph;
+    return std::unique_ptr<cudaGraph_t, CudaGraphDeleter>(&graph);
+}
+
+
 
 int main(int argc, char **argv)
 {
@@ -129,47 +154,48 @@ int main(int argc, char **argv)
     nvtxRangePop();
 
     // размерности grid и block
-    dim3 grid(32 , 32);
+    dim3 grid(32, 32);
 	dim3 block(32, 32);
-
     cudaError_t cudaErr = cudaSuccess;
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
 
-    cuda_unique_ptr<double> d_unique_ptr_error(cuda_new<double>(0), cuda_delete<double>);
+    std::unique_ptr<cudaStream_t, CudaStreamDeleter> stream_unique_ptr = getNewCudaStream();
+
+    std::unique_ptr<cudaGraph_t, CudaGraphDeleter> graph_unique_ptr = getNewCudaGraph();
+
+    cudaStream_t stream = *stream_unique_ptr.get();
+    cudaGraph_t graph = *graph_unique_ptr.get();
+
+    
+
+
+    cuda_unique_ptr<double> d_unique_ptr_error(cuda_new<double>(1), cuda_delete<double>);
     cuda_unique_ptr<void> d_unique_ptr_temp_storage(cuda_new<void>(0), cuda_delete<void>);
 
-    cuda_unique_ptr<double> d_unique_ptr_A(cuda_new<double>(0), cuda_delete<double>);
-    cuda_unique_ptr<double> d_unique_ptr_Anew(cuda_new<double>(0), cuda_delete<double>);
-    cuda_unique_ptr<double> d_unique_ptr_Subtract_temp(cuda_new<double>(0), cuda_delete<double>);
+    cuda_unique_ptr<double> d_unique_ptr_A(cuda_new<double>(m*m), cuda_delete<double>);
+    cuda_unique_ptr<double> d_unique_ptr_Anew(cuda_new<double>(m*m), cuda_delete<double>);
+    cuda_unique_ptr<double> d_unique_ptr_Subtract_temp(cuda_new<double>(m*m), cuda_delete<double>);
     
     // выделение памяти и перенос на GPU
 	double *d_error_ptr = d_unique_ptr_error.get();
-	cudaErr = cudaMalloc((void**)&d_error_ptr, sizeof(double));
-    printCudaError(cudaErr, "cudaMalloc");
 
     double *d_A = d_unique_ptr_A.get();
-  	cudaErr = cudaMalloc((void **)&d_A, m*m*sizeof(double));
-    printCudaError(cudaErr, "cudaMalloc");
 
 	double *d_Anew = d_unique_ptr_Anew.get();
-	cudaErr = cudaMalloc((void **)&d_Anew, m*m*sizeof(double));
-    printCudaError(cudaErr, "cudaMalloc");
 
     double *d_Subtract_temp = d_unique_ptr_Subtract_temp.get();
-	cudaErr = cudaMalloc((void **)&d_Subtract_temp, m*m*sizeof(double));
-    printCudaError(cudaErr, "cudaMalloc");
 
     cudaErr = cudaMemcpy(d_A, A, m*m*sizeof(double), cudaMemcpyHostToDevice);
     printCudaError(cudaErr, "cudaMemcpy");
 
     cudaErr = cudaMemcpy(d_Anew, Anew, m*m*sizeof(double), cudaMemcpyHostToDevice);
     printCudaError(cudaErr, "cudaMemcpy");
+
 	// проверка занимаемой памяти для редукции
     void *d_temp_storage = d_unique_ptr_temp_storage.get();
     size_t temp_storage_bytes = 0;
     cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_Anew, d_error_ptr, m*m, stream);
-    cudaMalloc((void**)&d_temp_storage, temp_storage_bytes);
+    cudaErr = cudaMalloc((void**)&d_temp_storage, temp_storage_bytes);
+    printCudaError(cudaErr, "cudaMalloc");
 
     printf("temp_storage_bytes: %d\n", temp_storage_bytes);
     printf("Jacobi relaxation Calculation: %d x %d mesh\n", m, m);
@@ -178,7 +204,6 @@ int main(int argc, char **argv)
 
     // graph
     bool graph_created = false;
-	cudaGraph_t graph;
 	cudaGraphExec_t instance;
 
     int iter = 0;
